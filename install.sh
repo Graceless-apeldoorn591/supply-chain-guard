@@ -8,6 +8,105 @@ BIN_PATH="$BIN_DIR/scguard"
 CONFIG_DIR="${SCGUARD_CONFIG_DIR:-$HOME/.config/supply-chain-guard}"
 ENV_PATH="$CONFIG_DIR/env"
 
+ACTION="install"
+PURGE=0
+for arg in "$@"; do
+  case "$arg" in
+    --uninstall) ACTION="uninstall" ;;
+    --purge)     PURGE=1 ;;
+    -h|--help)
+      cat <<EOF
+Supply Chain Guard installer
+
+Usage:
+  install.sh                Install or update Supply Chain Guard.
+  install.sh --uninstall    Remove the scguard binary, install directory,
+                            and shell hook. Prompts before deleting config.
+  install.sh --uninstall --purge
+                            Same as --uninstall but also deletes the config
+                            directory without prompting.
+
+Environment overrides:
+  SCGUARD_REPO_URL          Default: https://github.com/pc-style/supply-chain-guard.git
+  SCGUARD_INSTALL_DIR       Default: \$HOME/.local/share/supply-chain-guard
+  SCGUARD_BIN_DIR           Default: \$HOME/.local/bin
+  SCGUARD_CONFIG_DIR        Default: \$HOME/.config/supply-chain-guard
+EOF
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $arg" >&2
+      echo "Run 'install.sh --help' for usage." >&2
+      exit 1
+      ;;
+  esac
+done
+
+remove_shell_hook() {
+  local profile
+  for profile in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile" "$HOME/.config/fish/config.fish"; do
+    [ -f "$profile" ] || continue
+    if grep -q 'scguard shell-hook' "$profile" 2>/dev/null; then
+      local tmp
+      tmp="$(mktemp)"
+      # Drop the marker comment line and the eval line.
+      awk '
+        /# Supply Chain Guard — intercept package manager installs/ { skip=1; next }
+        skip==1 && /scguard shell-hook/ { skip=0; next }
+        { print }
+      ' "$profile" > "$tmp"
+      mv "$tmp" "$profile"
+      echo "Removed shell hook from $profile"
+    fi
+  done
+}
+
+if [ "$ACTION" = "uninstall" ]; then
+  echo "Uninstalling Supply Chain Guard"
+
+  if [ -f "$BIN_PATH" ] || [ -L "$BIN_PATH" ]; then
+    rm -f "$BIN_PATH"
+    echo "Removed $BIN_PATH"
+  else
+    echo "No binary at $BIN_PATH"
+  fi
+
+  if [ -d "$INSTALL_DIR" ]; then
+    rm -rf "$INSTALL_DIR"
+    echo "Removed $INSTALL_DIR"
+  else
+    echo "No install directory at $INSTALL_DIR"
+  fi
+
+  remove_shell_hook
+
+  if [ -d "$CONFIG_DIR" ]; then
+    if [ "$PURGE" -eq 1 ]; then
+      rm -rf "$CONFIG_DIR"
+      echo "Removed $CONFIG_DIR"
+    else
+      CONFIRM=""
+      printf "Also delete config at %s? [y/N] " "$CONFIG_DIR"
+      if ! { IFS= read -r CONFIRM < /dev/tty; } 2>/dev/null; then
+        IFS= read -r CONFIRM || true
+      fi
+      case "$CONFIRM" in
+        [Yy]*)
+          rm -rf "$CONFIG_DIR"
+          echo "Removed $CONFIG_DIR"
+          ;;
+        *)
+          echo "Kept $CONFIG_DIR (use --purge to remove non-interactively)"
+          ;;
+      esac
+    fi
+  fi
+
+  echo
+  echo "Supply Chain Guard uninstalled."
+  exit 0
+fi
+
 if ! command -v bun >/dev/null 2>&1; then
   echo "bun is required." >&2
   echo "Install Bun: curl -fsSL https://bun.sh/install | bash" >&2
