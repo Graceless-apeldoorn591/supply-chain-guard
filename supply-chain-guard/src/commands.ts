@@ -75,6 +75,16 @@ function printNextSteps(spec: string, reportPath: string, willInstall: boolean) 
   console.log("");
 }
 
+const DOCTOR_FIX_HINTS: Record<string, string> = {
+  "dependency: bun": "curl -fsSL https://bun.sh/install | bash",
+  "dependency: git": "apt install git  # or: brew install git",
+  "dependency: tar": "apt install tar",
+  "dependency: unzip": "apt install unzip",
+  "~/.local/bin on PATH": 'export PATH="$HOME/.local/bin:$PATH"',
+  "shell hook active": 'eval "$(scguard shell-hook)"',
+  "SOCKET_API_KEY configured": "scguard config  # or visit socket.dev to get a key",
+};
+
 export async function doctorCommand() {
   const checks: Array<{ name: string; ok: boolean; detail: string }> = [];
   for (const bin of ["bun", "git", "tar", "unzip"]) {
@@ -104,6 +114,9 @@ export async function doctorCommand() {
       : `${style.cross()} ${c.amber("warn", true)}`;
     if (!check.ok) allOk = false;
     console.log(`  ${marker}  ${c.white(check.name.padEnd(28))} ${c.dim(check.detail)}`);
+    if (!check.ok && DOCTOR_FIX_HINTS[check.name]) {
+      console.log(`           ${c.dim(`fix: ${DOCTOR_FIX_HINTS[check.name]}`)}`);
+    }
   }
   console.log("");
   if (allOk) {

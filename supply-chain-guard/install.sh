@@ -9,7 +9,8 @@ CONFIG_DIR="${SCGUARD_CONFIG_DIR:-$HOME/.config/supply-chain-guard}"
 ENV_PATH="$CONFIG_DIR/env"
 
 if ! command -v bun >/dev/null 2>&1; then
-  echo "bun is required. Install Bun first: https://bun.sh" >&2
+  echo "bun is required." >&2
+  echo "Install Bun: curl -fsSL https://bun.sh/install | bash" >&2
   exit 1
 fi
 
@@ -93,6 +94,42 @@ case ":${PATH}:" in
     echo
     ;;
 esac
+
+# ── Shell hook auto-install (opt-in) ────────────────────────────────────────
+case "${SHELL:-}" in
+  *zsh*)  PROFILE="$HOME/.zshrc" ;;
+  *fish*) PROFILE="$HOME/.config/fish/config.fish" ;;
+  *)      PROFILE="$HOME/.bashrc" ;;
+esac
+
+if grep -q 'scguard shell-hook' "$PROFILE" 2>/dev/null; then
+  echo "Shell hook already in $PROFILE"
+else
+  HOOK_INPUT=""
+  printf "Add shell hook (guards bun/npm/pnpm/yarn/code) to %s? [Y/n] " "$PROFILE"
+  if ! { IFS= read -r HOOK_INPUT < /dev/tty; } 2>/dev/null; then
+    IFS= read -r HOOK_INPUT || true
+  fi
+  case "$HOOK_INPUT" in
+    [Nn]*)
+      echo "Skipping shell hook. You can add it manually (see below)."
+      ;;
+    *)
+      mkdir -p "$(dirname "$PROFILE")"
+      case "${SHELL:-}" in
+        *fish*)
+          printf '\n# Supply Chain Guard — intercept package manager installs\neval (scguard shell-hook)\n' >> "$PROFILE"
+          ;;
+        *)
+          printf '\n# Supply Chain Guard — intercept package manager installs\neval "$(scguard shell-hook)"\n' >> "$PROFILE"
+          ;;
+      esac
+      echo "Shell hook added to $PROFILE"
+      echo "Reload your shell or run: source $PROFILE"
+      ;;
+  esac
+fi
+echo
 
 echo "Add this to your shell profile to guard bun/npm/pnpm/yarn/code commands:"
 echo '  eval "$(scguard shell-hook)"'

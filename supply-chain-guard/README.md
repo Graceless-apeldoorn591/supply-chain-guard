@@ -1,6 +1,32 @@
 # Supply Chain Guard
 
-Supply Chain Guard puts a local review step in front of npm packages and VS Code extensions. It downloads the artifact first, checks the files that usually matter during an install, writes JSON and Markdown reports, and can ask Codex or PI for a second review before anything lands in your project.
+A local review step for npm packages and VS Code extensions — inspect the artifact before it touches your project.
+
+## Quick Start
+
+**1. Install**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/pc-style/supply-chain-guard/main/install.sh | bash
+```
+
+**2. Activate the guard in your shell**
+
+```sh
+eval "$(scguard shell-hook)"
+```
+
+**3. Scan a package before installing**
+
+```sh
+scguard review axios
+```
+
+---
+
+## What It Does
+
+Supply Chain Guard downloads the artifact first, checks the files that usually matter during an install, writes JSON and Markdown reports, and can ask Codex or PI for a second review before anything lands in your project.
 
 It is meant for the moment right before you run `bun add`, `npm install`, or `code --install-extension`. It is not a malware sandbox, and an approval is not proof that a package is safe. It is a local tripwire for suspicious install behavior.
 
@@ -52,17 +78,6 @@ The demo script cleans up its temporary workspace when it finishes:
 - Optional: `codex` and/or `pi` CLIs for agent review
 - Optional for npm staged publishing: npm CLI `11.15.0+` and Node `22.14.0+`
 
-## Socket API Token
-
-During install, you can paste a Socket API token. The installer stores it in `~/.config/supply-chain-guard/env` so scans can include Socket's package score. Create a token here:
-
-https://socket.dev/dashboard/settings/api-tokens
-
-Recommended Socket scopes:
-
-- `packages:list` for current package score lookup
-- `threat-feed:list` later if you want Socket-backed active attack warnings
-
 ## Commands
 
 ```sh
@@ -97,6 +112,27 @@ After that, normal commands such as `bun add lodash`, `pnpm add react`, `yarn ad
 
 For now, `code --install-extension publisher.name` is blocked because the VS Code CLI would download the extension before this tool can inspect it. Download the `.vsix`, scan it, then install the reviewed artifact.
 
+## Socket API Token
+
+During install, you can paste a Socket API token. The installer stores it in `~/.config/supply-chain-guard/env` so scans can include Socket's package score. Create a token here:
+
+https://socket.dev/dashboard/settings/api-tokens
+
+Recommended Socket scopes:
+
+- `packages:list` for current package score lookup
+- `threat-feed:list` later if you want Socket-backed active attack warnings
+
+## Socket Intelligence
+
+Set `SOCKET_API_KEY` to query Socket.dev during npm scans:
+
+```sh
+export SOCKET_API_KEY="..."
+```
+
+Reports say whether Socket was checked, skipped, or errored. If Socket returns a low supply-chain score, the guard raises the risk and can block the install.
+
 ## npm Staged Publishing
 
 npm staged publishing lets maintainers review a package before it goes live. `scguard scan-stage <stage-id>` runs `npm stage download <stage-id>`, analyzes the downloaded tarball, and applies the same agent review policy.
@@ -120,35 +156,6 @@ I accept the active supply-chain risk
 
 If the text does not match exactly, the install or update is cancelled.
 
-## Socket Intelligence
-
-Set `SOCKET_API_KEY` to query Socket.dev during npm scans:
-
-```sh
-export SOCKET_API_KEY="..."
-```
-
-Reports say whether Socket was checked, skipped, or errored. If Socket returns a low supply-chain score, the guard raises the risk and can block the install.
-
-## Development
-
-```sh
-bun install
-bun run check
-```
-
-Generated cache, reports, tarballs, `node_modules`, and env files are ignored by git.
-
-## Staging And Takedown Flow
-
-The local staging flow is the `.scguard/cache`, `.scguard/work`, and `.scguard/reports` pipeline. Nothing is installed until analysis finishes and approval is explicit.
-
-The takedown flow is intentionally simple in this first version:
-
-- set `SCGUARD_ACTIVE_INCIDENT` to force explicit acknowledgement on every package operation
-- remove the shell hook or unset the advisory after the incident ends
-- inspect `.scguard/reports` for the packages and artifacts staged during the incident
-
 ## What It Checks
 
 - install lifecycle scripts such as `preinstall`, `install`, and `postinstall`
@@ -160,3 +167,22 @@ The takedown flow is intentionally simple in this first version:
 - Socket.dev package score when `SOCKET_API_KEY` is configured
 
 This first version is conservative. It blocks `high` risk installs, warns at `medium`, and always leaves report artifacts behind for human or agent review.
+
+## Staging And Takedown Flow
+
+The local staging flow is the `.scguard/cache`, `.scguard/work`, and `.scguard/reports` pipeline. Nothing is installed until analysis finishes and approval is explicit.
+
+The takedown flow is intentionally simple in this first version:
+
+- set `SCGUARD_ACTIVE_INCIDENT` to force explicit acknowledgement on every package operation
+- remove the shell hook or unset the advisory after the incident ends
+- inspect `.scguard/reports` for the packages and artifacts staged during the incident
+
+## Development
+
+```sh
+bun install
+bun run check
+```
+
+Generated cache, reports, tarballs, `node_modules`, and env files are ignored by git.
