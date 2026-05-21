@@ -49,7 +49,7 @@ export async function scanNpm(spec: string, options: { offline?: boolean } = {})
   const offlineOpt = { offline: options.offline };
   // Fan out intelligence lookups in parallel with the (cached or fresh) tarball download.
   const intelPromise = Promise.all([
-    checkSocket(name, version),
+    checkSocket(name, version, offlineOpt),
     checkOsv(name, version, offlineOpt),
     checkPackageAge(name, version, offlineOpt),
     verifyNpmSignatures(name, version, meta.dist ?? {}, offlineOpt),
@@ -110,7 +110,7 @@ export async function scanNpmStage(stageId: string, options: { offline?: boolean
   const offlineOpt = { offline: options.offline };
   const [socket, osv, packageAge] = known
     ? await Promise.all([
-        checkSocket(name, version),
+        checkSocket(name, version, offlineOpt),
         checkOsv(name, version, offlineOpt),
         checkPackageAge(name, version, offlineOpt),
       ])

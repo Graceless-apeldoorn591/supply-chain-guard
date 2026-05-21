@@ -1,5 +1,6 @@
 import { describe, test, expect } from "bun:test";
 import {
+  checkSocket,
   checkOsv,
   checkPackageAge,
   checkTyposquat,
@@ -33,6 +34,10 @@ describe("computeCvssV3BaseScore", () => {
   });
   test("missing metric → undefined", () => {
     expect(computeCvssV3BaseScore("CVSS:3.1/AV:N/AC:L")).toBeUndefined();
+  });
+
+  test("invalid scope metric → undefined", () => {
+    expect(computeCvssV3BaseScore("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:X/C:H/I:H/A:H")).toBeUndefined();
   });
 });
 
@@ -106,6 +111,12 @@ describe("checkTyposquat", () => {
 // checkOsv / checkPackageAge / verifyNpmSignatures — offline shortcircuit
 // ---------------------------------------------------------------------------
 describe("offline mode shortcircuits", () => {
+  test("checkSocket offline returns skipped without fetching", async () => {
+    const r = await checkSocket("react", "18.3.1", { offline: true });
+    expect(r.status).toBe("skipped");
+    expect(r.message).toContain("Offline");
+  });
+
   test("checkOsv offline returns skipped without fetching", async () => {
     const r = await checkOsv("react", "18.3.1", { offline: true });
     expect(r.status).toBe("skipped");

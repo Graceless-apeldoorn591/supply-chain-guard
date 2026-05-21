@@ -16,10 +16,19 @@ import type {
 } from "./core";
 import topNpmPackages from "./data/top-npm-packages.json";
 
-export async function checkSocket(name: string, version: string): Promise<SocketResult> {
+export async function checkSocket(name: string, version: string, options: { offline?: boolean } = {}): Promise<SocketResult> {
   const token = Bun.env.SOCKET_API_KEY;
   const packagePath = `${encodeURIComponent(name).replace("%40", "@")}/${encodeURIComponent(version)}`;
   const url = `https://api.socket.dev/v0/npm/${packagePath}/score`;
+  if (options.offline) {
+    return {
+      status: "skipped",
+      package: name,
+      version,
+      url,
+      message: "Offline mode enabled; Socket intelligence was not queried.",
+    };
+  }
   if (!token) {
     return {
       status: "skipped",
@@ -287,6 +296,7 @@ export function computeCvssV3BaseScore(vector: string): number | undefined {
   const AC = ({ L: 0.77, H: 0.44 } as const)[get("AC") as "L" | "H"];
   const UI = ({ N: 0.85, R: 0.62 } as const)[get("UI") as "N" | "R"];
   const S = get("S");
+  if (S !== "U" && S !== "C") return undefined;
   const PR_TABLE = S === "C"
     ? ({ N: 0.85, L: 0.68, H: 0.5 } as const)
     : ({ N: 0.85, L: 0.62, H: 0.27 } as const);
