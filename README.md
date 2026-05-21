@@ -1,5 +1,7 @@
 # Supply Chain Guard
 
+Website: [supply-chain-guard.vercel.app](https://supply-chain-guard.vercel.app)
+
 Supply Chain Guard puts a local review step in front of npm packages and VS Code extensions. It downloads the artifact first, checks the files that usually matter during an install, writes JSON and Markdown reports, and can ask Codex or PI for a second review before anything lands in your project.
 
 It is meant for the moment right before you run `bun add`, `npm install`, or `code --install-extension`. It is not a malware sandbox, and an approval is not proof that a package is safe. It is a local tripwire for suspicious install behavior.
