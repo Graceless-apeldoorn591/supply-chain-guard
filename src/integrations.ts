@@ -589,27 +589,7 @@ export async function checkPackageAge(
 export async function writeAgentPrompt(report: Report, agent: string, reportPath?: string) {
   const base = report.target.replace(/[^a-z0-9_.@-]+/gi, "_");
   const path = join(REPORT_DIR, `${base}-${agent}-prompt.md`);
-  const prompt = [
-    `You are ${agent === "pi" ? "PI" : "Codex"} reviewing a local supply-chain analysis report before installation.`,
-    "",
-    `Target: ${report.target}`,
-    `Kind: ${report.kind}`,
-    `Risk: ${report.summary.risk}`,
-    `Report JSON: ${reportPath ?? "(attached or pasted below)"}`,
-    "",
-    "Tasks:",
-    "1. Verify whether each finding is a true risk or expected behavior.",
-    "2. Inspect package scripts, executable entry points, extension activation, and network/credential access.",
-    "3. Recommend one of: approve, reject, or manual-review.",
-    "4. Cite exact files, scripts, or manifest fields that support your recommendation.",
-    "5. End with exactly one line: SCGUARD_DECISION: approve, SCGUARD_DECISION: reject, or SCGUARD_DECISION: manual-review.",
-    "",
-    "Report:",
-    "```json",
-    JSON.stringify(report, null, 2),
-    "```",
-    "",
-  ].join("\n");
-  await Bun.write(path, prompt);
+  const agentName: AgentName = agent === "pi" ? "pi" : "codex";
+  await Bun.write(path, agentReviewPrompt(report, reportPath ?? path, agentName));
   return path;
 }
