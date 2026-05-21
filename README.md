@@ -4,6 +4,14 @@ Supply Chain Guard puts a local review step in front of npm packages and VS Code
 
 It is meant for the moment right before you run `bun add`, `npm install`, or `code --install-extension`. It is not a malware sandbox, and an approval is not proof that a package is safe. It is a local tripwire for suspicious install behavior.
 
+## Install Or Update
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/pc-style/supply-chain-guard/main/install.sh | bash
+```
+
+The installer is also the updater. It clones or pulls this repo into `~/.local/share/supply-chain-guard`, runs `bun install`, creates `~/.local/bin/scguard`, and opens the config menu when a TTY is available.
+
 ## Demo
 
 The CLI is intentionally plain. `scguard --help` shows the install gate, scan, shell hook, config, and agent-review commands:
@@ -44,13 +52,7 @@ The demo script cleans up its temporary workspace when it finishes:
 - Optional: `codex` and/or `pi` CLIs for agent review
 - Optional for npm staged publishing: npm CLI `11.15.0+` and Node `22.14.0+`
 
-## Install Or Update
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/pc-style/supply-chain-guard/main/install.sh | bash
-```
-
-The installer is also the updater. It clones or pulls this repo into `~/.local/share/supply-chain-guard`, runs `bun install`, creates `~/.local/bin/scguard`, and opens the config menu when a TTY is available.
+## Socket API Token
 
 During install, you can paste a Socket API token. The installer stores it in `~/.config/supply-chain-guard/env` so scans can include Socket's package score. Create a token here:
 
@@ -64,24 +66,26 @@ Recommended Socket scopes:
 ## Commands
 
 ```sh
-scguard add <package[@version]> [--dev] [--approve]
-scguard add <package[@version]> --agent codex|pi|both --approve
-scguard scan-npm <package[@version]> [--json]
-scguard scan-stage <stage-id> [--json]
+scguard review <package[@version]> [--agent codex|pi|both]
+scguard install <package[@version]> [--dev] [--agent codex|pi|both]
 scguard scan-vsix <path-to-extension.vsix> [--json]
-scguard config
-scguard config --show
+scguard doctor
+scguard clean [--reports] [--cache] [--work] [--all]
+scguard config [--show] [--agent none|codex|pi|both]
 scguard shell-hook
-scguard guard bun|npm|pnpm|yarn|code <args...>
-scguard agent-prompt <report.json> --agent codex|pi
-scguard agent-review <report.json> --agent codex|pi|both
 ```
 
-`add` does not install by default. It resolves the package tarball, downloads it to `.scguard/cache`, extracts it to `.scguard/work`, analyzes it, writes reports to `.scguard/reports`, and stops. Add `--approve` when you want the install to continue after the gate passes.
+Advanced commands: `scguard scan-npm`, `scguard scan-stage`, `scguard guard`, `scguard agent-prompt`, `scguard agent-review`, `scguard self-test`.
+
+`review` resolves the package tarball, downloads it to `.scguard/cache`, extracts it to `.scguard/work`, analyzes it, writes reports to `.scguard/reports`, and stops. Use `install` instead when you want the install to continue after the gate passes. `scguard add` is kept as a deprecated alias for `review`.
 
 Add `--agent codex`, `--agent pi`, or `--agent both` when you want a required agent review before install. The agent must end with `SCGUARD_DECISION: approve`. A rejection, manual-review decision, missing decision, non-zero exit, or missing agent binary blocks the install.
 
 Run `scguard config` to choose the default review mode for future scans and install gates: no agent, Codex, PI, or both. PI runs with `--no-tools --no-context-files`. Codex runs through `codex exec` in a read-only sandbox.
+
+`scguard doctor` checks Bun, Git, tar, unzip, `~/.local/bin` on PATH, the shell hook, the Socket token, and the optional Codex/PI CLIs. Run it first if something looks wrong.
+
+`scguard clean` removes generated state under `.scguard/`. Use `--reports`, `--cache`, `--work`, or `--all` to choose what to clear.
 
 Recommended shell hook:
 
@@ -89,7 +93,7 @@ Recommended shell hook:
 eval "$(scguard shell-hook)"
 ```
 
-After that, normal commands such as `bun add`, `npm install`, `pnpm update`, `yarn add`, and `code --install-extension ./extension.vsix` go through the guard first. The wrapper prints a warning for package and extension installs because those commands can run untrusted code.
+After that, normal commands such as `bun add lodash`, `pnpm add react`, `yarn add zod`, and `code --install-extension ./extension.vsix` go through the guard first. Bare `npm install`, `npm ci`, and `bun install` are blocked: scguard cannot yet verify the exact tarballs your lockfile would resolve to. Use explicit specs, or set `SCGUARD_BYPASS=1` for a single command if you really need to skip the guard.
 
 For now, `code --install-extension publisher.name` is blocked because the VS Code CLI would download the extension before this tool can inspect it. Download the `.vsix`, scan it, then install the reviewed artifact.
 
