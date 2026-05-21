@@ -1,3 +1,6 @@
 .scguard/
 node_modules/
 *.tgz
+.env
+.env.*
+!.env.example

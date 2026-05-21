@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { basename, join, resolve, relative } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import { homedir } from "node:os";
 
 type Risk = "low" | "medium" | "high";
@@ -66,6 +66,7 @@ type ActiveAdvisory = {
 };
 
 const ROOT = process.cwd();
+const CLI_ENTRY = import.meta.path;
 const GUARD_DIR = join(ROOT, ".scguard");
 const CACHE_DIR = join(GUARD_DIR, "cache");
 const WORK_DIR = join(GUARD_DIR, "work");
@@ -85,7 +86,7 @@ const SUSPICIOUS_PATTERNS: Array<[RegExp, string, Risk, string]> = [
 async function main() {
   const cliArgs = normalizeArgv(Bun.argv);
   const [cmd, ...args] = cliArgs;
-  if (process.env.SCGUARD_DEBUG_ARGV) {
+  if (Bun.env.SCGUARD_DEBUG_ARGV) {
     console.error(JSON.stringify({ argv: Bun.argv, cliArgs, cmd, args }));
   }
   await ensureDirs();
@@ -145,7 +146,7 @@ async function main() {
   if (cmd === "agent-prompt") {
     const reportPath = requireArg(args[0], "agent-prompt requires a report path");
     const agent = readOption(args, "--agent") ?? "codex";
-    const report = JSON.parse(await readFile(reportPath, "utf8")) as Report;
+    const report = await readJson<Report>(reportPath);
     const promptPath = await writeAgentPrompt(report, agent);
     console.log(promptPath);
     return;
@@ -153,7 +154,7 @@ async function main() {
 
   if (cmd === "agent-review") {
     const reportPath = requireArg(args[0], "agent-review requires a report path");
-    const report = JSON.parse(await readFile(reportPath, "utf8")) as Report;
+    const report = await readJson<Report>(reportPath);
     const agentMode = parseAgentMode(args);
     const agents = agentMode.length > 0 ? agentMode : ["codex" as const];
     const reviews = await runAgentReviews(report, reportPath, agents);
@@ -225,7 +226,7 @@ async function analyzeDirectory(
   intelligence: Partial<Report["intelligence"]> = {},
 ): Promise<Report> {
   const pkgPath = join(dir, "package.json");
-  const pkg = JSON.parse(await readFile(pkgPath, "utf8")) as Record<string, unknown>;
+  const pkg = await readJson<Record<string, unknown>>(pkgPath);
   const findings: Finding[] = [];
   inspectPackageJson(pkg, kind, findings);
   inspectIntelligence(intelligence, findings);
@@ -354,7 +355,7 @@ async function inspectFiles(dir: string, findings: Finding[]) {
     }
     if (rel === "package.json") continue;
     if (!/\.(js|cjs|mjs|ts|sh|ps1|cmd|node)$/i.test(file) || s.size > 300_000) continue;
-    const text = await readFile(file, "utf8").catch(() => "");
+    const text = await Bun.file(file).text().catch(() => "");
     inspectText(`file.${rel}`, stripComments(text).slice(0, 300_000), findings);
   }
 }
@@ -385,7 +386,7 @@ async function resolveNpm(spec: string): Promise<Record<string, any>> {
 }
 
 async function checkSocket(name: string, version: string): Promise<SocketResult> {
-  const token = process.env.SOCKET_API_KEY;
+  const token = Bun.env.SOCKET_API_KEY;
   const packagePath = `${encodeURIComponent(name).replace("%40", "@")}/${encodeURIComponent(version)}`;
   const url = `https://api.socket.dev/v0/npm/${packagePath}/score`;
   if (!token) {
@@ -498,7 +499,7 @@ async function inferSpecsForPackageOperation(action: string) {
   }
   if (action !== "install" && action !== "i" && action !== "ci") return [];
   const pkgPath = join(ROOT, "package.json");
-  const pkg = JSON.parse(await readFile(pkgPath, "utf8")) as Record<string, unknown>;
+  const pkg = await readJson<Record<string, unknown>>(pkgPath);
   const deps = {
     ...objectValue(pkg.dependencies),
     ...objectValue(pkg.devDependencies),
@@ -546,8 +547,8 @@ function extractSpecs(base: string, args: string[]) {
 }
 
 function readActiveAdvisory(): ActiveAdvisory {
-  const message = process.env.SCGUARD_ACTIVE_INCIDENT;
-  const until = process.env.SCGUARD_ACTIVE_INCIDENT_UNTIL;
+  const message = Bun.env.SCGUARD_ACTIVE_INCIDENT;
+  const until = Bun.env.SCGUARD_ACTIVE_INCIDENT_UNTIL;
   if (!message) {
     return { active: false, source: "env", message: "No active supply-chain advisory configured." };
   }
@@ -558,7 +559,7 @@ function readActiveAdvisory(): ActiveAdvisory {
 }
 
 function shellHook() {
-  const entry = resolve(ROOT, "src", "cli.ts");
+  const entry = CLI_ENTRY;
   return `[ -f "${CONFIG_ENV_PATH}" ] && source "${CONFIG_ENV_PATH}"
 scguard() { command bun run ${entry} "$@"; }
 bun() { command bun run ${entry} guard bun "$@"; }
@@ -608,8 +609,8 @@ async function findPackageRoot(dir: string) {
 async function emitReport(report: Report, json: boolean) {
   const base = report.target.replace(/[^a-z0-9_.@-]+/gi, "_");
   const jsonPath = join(REPORT_DIR, `${base}-${Date.now()}.json`);
-  await writeFile(jsonPath, JSON.stringify(report, null, 2));
-  await writeFile(jsonPath.replace(/\.json$/, ".md"), renderMarkdown(report, jsonPath));
+  await Bun.write(jsonPath, JSON.stringify(report, null, 2));
+  await Bun.write(jsonPath.replace(/\.json$/, ".md"), renderMarkdown(report, jsonPath));
   await writeAgentPrompt(report, "codex", jsonPath);
   await writeAgentPrompt(report, "pi", jsonPath);
   if (json) {
@@ -652,7 +653,7 @@ async function runAgentReview(report: Report, reportPath: string, agent: AgentNa
     proc.exited,
   ]);
   const output = [stdout, stderr && `\n--- stderr ---\n${stderr}`].filter(Boolean).join("");
-  await writeFile(outputPath, output);
+  await Bun.write(outputPath, output);
   const status = exitCode === 0 ? parseAgentDecision(output) : "error";
   return {
     agent,
@@ -726,7 +727,7 @@ async function commandExists(command: string) {
 
 async function writeAgentOutput(report: Report, agent: AgentName, output: string) {
   const outputPath = join(REPORT_DIR, `${report.target.replace(/[^a-z0-9_.@-]+/gi, "_")}-${agent}-review.txt`);
-  await writeFile(outputPath, output);
+  await Bun.write(outputPath, output);
   return outputPath;
 }
 
@@ -786,12 +787,12 @@ async function writeAgentPrompt(report: Report, agent: string, reportPath?: stri
     "```",
     "",
   ].join("\n");
-  await writeFile(path, prompt);
+  await Bun.write(path, prompt);
   return path;
 }
 
 async function artifactInfo(path: string, source: string) {
-  const bytes = await readFile(path);
+  const bytes = Buffer.from(await Bun.file(path).arrayBuffer());
   return {
     source,
     sha256: createHash("sha256").update(bytes).digest("hex"),
@@ -868,7 +869,11 @@ Usage:
 }
 
 function debug(message: string) {
-  if (process.env.SCGUARD_DEBUG) console.error(`scguard debug: ${message}`);
+  if (Bun.env.SCGUARD_DEBUG) console.error(`scguard debug: ${message}`);
+}
+
+async function readJson<T>(path: string): Promise<T> {
+  return await Bun.file(path).json() as T;
 }
 
 main().catch((error) => {
