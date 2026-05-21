@@ -9,7 +9,7 @@ Website: [supply-chain-guard-five.vercel.app](https://supply-chain-guard-five.ve
 **1. Install**
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/pc-style/supply-chain-guard/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/pc-style/supply-chain-guard/main/supply-chain-guard/install.sh | bash
 ```
 
 **2. Activate the guard in your shell**
@@ -35,7 +35,7 @@ It is meant for the moment right before you run `bun add`, `npm install`, or `co
 ## Install Or Update
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/pc-style/supply-chain-guard/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/pc-style/supply-chain-guard/main/supply-chain-guard/install.sh | bash
 ```
 
 The installer is also the updater. It clones or pulls this repo into `~/.local/share/supply-chain-guard`, runs `bun install`, creates `~/.local/bin/scguard`, and opens the config menu when a TTY is available.
