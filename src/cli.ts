@@ -17,7 +17,7 @@ type Finding = {
 type Report = {
   schemaVersion: 1;
   target: string;
-  kind: "npm" | "vsix";
+  kind: "npm" | "npm-stage" | "vsix";
   generatedAt: string;
   artifact: {
     source: string;
@@ -109,6 +109,14 @@ async function main() {
   if (cmd === "scan-npm") {
     const target = requireArg(args[0], "scan-npm requires a package spec");
     const report = await scanNpm(target);
+    const reportPath = await emitReport(report, args.includes("--json"));
+    await maybeRunConfiguredAgentReview(report, reportPath, args, args.includes("--json"));
+    return;
+  }
+
+  if (cmd === "scan-stage") {
+    const stageId = requireArg(args[0], "scan-stage requires an npm stage id");
+    const report = await scanNpmStage(stageId);
     const reportPath = await emitReport(report, args.includes("--json"));
     await maybeRunConfiguredAgentReview(report, reportPath, args, args.includes("--json"));
     return;
@@ -231,9 +239,21 @@ async function scanVsix(file: string): Promise<Report> {
   return analyzeDirectory(basename(file), "vsix", extensionDir, file, file);
 }
 
+async function scanNpmStage(stageId: string): Promise<Report> {
+  const artifactPath = await downloadNpmStage(stageId);
+  const extracted = await extractTarball(artifactPath);
+  const packageDir = await findPackageRoot(extracted);
+  const pkg = await readJson<Record<string, unknown>>(join(packageDir, "package.json"));
+  const name = String(pkg.name ?? "unknown");
+  const version = String(pkg.version ?? "unknown");
+  return analyzeDirectory(`npm-stage:${stageId}:${name}@${version}`, "npm-stage", packageDir, `npm stage download ${stageId}`, artifactPath, {
+    socket: name !== "unknown" && version !== "unknown" ? await checkSocket(name, version) : undefined,
+  });
+}
+
 async function analyzeDirectory(
   target: string,
-  kind: "npm" | "vsix",
+  kind: "npm" | "npm-stage" | "vsix",
   dir: string,
   source: string,
   artifactPath?: string,
@@ -292,7 +312,7 @@ function inspectIntelligence(intelligence: Partial<Report["intelligence"]>, find
   }
 }
 
-function inspectPackageJson(pkg: Record<string, unknown>, kind: "npm" | "vsix", findings: Finding[]) {
+function inspectPackageJson(pkg: Record<string, unknown>, kind: "npm" | "npm-stage" | "vsix", findings: Finding[]) {
   const scripts = objectValue(pkg.scripts);
   for (const [name, raw] of Object.entries(scripts)) {
     const script = String(raw);
@@ -451,6 +471,11 @@ async function guardCommand(args: string[]) {
     return;
   }
 
+  if (classification.kind === "npm-stage") {
+    await guardNpmStage(command, realArgs, classification.specs);
+    return;
+  }
+
   const advisory = readActiveAdvisory();
   const specs = classification.specs.length > 0
     ? classification.specs
@@ -505,6 +530,27 @@ async function guardVsCodeExtension(command: string, args: string[], specs: stri
   await run(command, stripGuardOptions(args));
 }
 
+async function guardNpmStage(command: string, args: string[], specs: string[]) {
+  const stageId = specs[0];
+  console.error(`scguard: npm staged publish approval detected: ${command} ${args.join(" ")}`);
+  console.error("scguard: staged packages must be downloaded and analyzed before approval.");
+  if (!stageId) throw new Error("Blocked npm stage approve: no stage id found.");
+  const report = await scanNpmStage(stageId);
+  let reportPath = await emitReport(report, false);
+  if (!report.summary.installAllowed) {
+    throw new Error(`Blocked npm stage approve ${stageId}: high-risk findings found. See ${reportPath}`);
+  }
+  const agentMode = await resolveAgentMode(args);
+  if (agentMode.length > 0) {
+    const reviews = await runAgentReviews(report, reportPath, agentMode);
+    report.agentReviews = reviews;
+    reportPath = await emitReport(report, false);
+    blockOnFailedReview(stageId, reviews);
+  }
+  requireActiveIncidentAcceptance();
+  await run(command, stripGuardOptions(args));
+}
+
 async function inferSpecsForPackageOperation(action: string) {
   if (action === "update" || action === "upgrade") {
     throw new Error("Broad package updates are blocked. Run the command with explicit package specs so each update can be staged and analyzed first.");
@@ -534,6 +580,14 @@ function requireActiveIncidentAcceptance(advisory = readActiveAdvisory()) {
 
 function classifyPackageCommand(command: string, args: string[]) {
   const base = basename(command);
+  if (base === "npm" && args[0] === "stage" && args[1] === "approve") {
+    return {
+      packageOperation: true,
+      kind: "npm-stage" as const,
+      action: "stage approve",
+      specs: args[2] ? [args[2]] : [],
+    };
+  }
   if (base === "code" && args.includes("--install-extension")) {
     const index = args.indexOf("--install-extension");
     return {
@@ -603,6 +657,21 @@ async function extractTarball(path: string) {
   const dir = await mkdtemp(join(WORK_DIR, "npm-"));
   await run("tar", ["-xzf", path, "-C", dir]);
   return dir;
+}
+
+async function downloadNpmStage(stageId: string) {
+  const dir = await mkdtemp(join(WORK_DIR, "stage-download-"));
+  const before = new Set(await readdir(dir));
+  await run("npm", ["stage", "download", stageId], { cwd: dir });
+  const after = await readdir(dir);
+  const created = after.filter((name) => !before.has(name) && name.endsWith(".tgz"));
+  if (created.length !== 1) {
+    throw new Error(`Expected npm stage download to create one .tgz file, found ${created.length}`);
+  }
+  const source = join(dir, created[0]);
+  const dest = join(CACHE_DIR, `npm-stage-${stageId.replace(/[^a-z0-9_.-]+/gi, "_")}.tgz`);
+  await Bun.write(dest, await Bun.file(source).arrayBuffer());
+  return dest;
 }
 
 async function findPackageRoot(dir: string) {
@@ -797,50 +866,26 @@ async function agentConfigTui(current: AgentMode): Promise<AgentMode> {
     { value: "pi", label: "PI", detail: "Run pi -p with no tools for every scan/install gate." },
     { value: "both", label: "Codex + PI", detail: "Require both agents to approve before install continues." },
   ];
-  let index = Math.max(0, options.findIndex((option) => option.value === current));
-  if (!process.stdin.isTTY) {
-    const answer = prompt("Default agent review (none/codex/pi/both): ") ?? current;
-    return normalizeAgentMode(answer.trim() || current);
+  renderAgentConfigMenu(options, current);
+  const answer = prompt("Select 1-4, or press Enter to keep current:");
+  if (!answer?.trim()) return current;
+  const index = Number(answer.trim()) - 1;
+  if (!Number.isInteger(index) || !options[index]) {
+    throw new Error("Config cancelled: expected a number from 1 to 4");
   }
-  process.stdin.setRawMode?.(true);
-  process.stdin.resume();
-  process.stdin.setEncoding("utf8");
-  try {
-    while (true) {
-      renderAgentConfigTui(options, index);
-      const key = await readKey();
-      const digit = key.match(/[1-4]/)?.[0];
-      if (key.includes("\u0003") || key.includes("q")) throw new Error("Config cancelled");
-      if (digit) index = Number(digit) - 1;
-      if (key.includes("\r") || key.includes("\n")) {
-        process.stdout.write("\x1b[2J\x1b[H");
-        return options[index].value;
-      }
-      if (key === "\u001b[A" || key === "k") index = (index + options.length - 1) % options.length;
-      if (key === "\u001b[B" || key === "j") index = (index + 1) % options.length;
-    }
-  } finally {
-    process.stdin.setRawMode?.(false);
-    process.stdin.pause();
-  }
+  return options[index].value;
 }
 
-function renderAgentConfigTui(options: Array<{ value: AgentMode; label: string; detail: string }>, index: number) {
-  process.stdout.write("\x1b[2J\x1b[H");
+function renderAgentConfigMenu(options: Array<{ value: AgentMode; label: string; detail: string }>, current: AgentMode) {
   process.stdout.write("Supply Chain Guard Config\n\n");
   process.stdout.write("Choose default agent review for scans and install gates.\n");
-  process.stdout.write("Use arrows/j/k, 1-4, Enter to save, q to cancel.\n\n");
+  process.stdout.write(`Current: ${current}\n\n`);
   options.forEach((option, optionIndex) => {
-    const pointer = optionIndex === index ? ">" : " ";
+    const pointer = option.value === current ? "*" : " ";
     process.stdout.write(`${pointer} ${optionIndex + 1}. ${option.label}\n`);
     process.stdout.write(`   ${option.detail}\n`);
   });
-}
-
-function readKey(): Promise<string> {
-  return new Promise((resolveKey) => {
-    process.stdin.once("data", (chunk) => resolveKey(String(chunk)));
-  });
+  process.stdout.write("\n");
 }
 
 function stripGuardOptions(args: string[]) {
@@ -951,8 +996,8 @@ async function ensureDirs() {
   await mkdir(REPORT_DIR, { recursive: true });
 }
 
-async function run(cmd: string, args: string[]) {
-  const proc = Bun.spawn([cmd, ...args], { stdout: "inherit", stderr: "inherit" });
+async function run(cmd: string, args: string[], options: { cwd?: string } = {}) {
+  const proc = Bun.spawn([cmd, ...args], { cwd: options.cwd, stdout: "inherit", stderr: "inherit" });
   const code = await proc.exited;
   if (code !== 0) throw new Error(`${cmd} ${args.join(" ")} failed with exit code ${code}`);
 }
@@ -993,6 +1038,7 @@ function help() {
 Usage:
   bun run scguard add <package[@version]> [--dev] [--approve]
   bun run scguard scan-npm <package[@version]> [--json]
+  bun run scguard scan-stage <stage-id> [--json]
   bun run scguard scan-vsix <extension.vsix> [--json]
   bun run scguard add <package[@version]> --agent codex|pi|both --approve
   bun run scguard agent-review <report.json> --agent codex|pi|both

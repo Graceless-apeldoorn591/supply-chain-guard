@@ -25,6 +25,7 @@ Recommended Socket scopes:
 bun run scguard add <package[@version]> [--dev] [--approve]
 bun run scguard add <package[@version]> --agent codex|pi|both --approve
 bun run scguard scan-npm <package[@version]> [--json]
+bun run scguard scan-stage <stage-id> [--json]
 bun run scguard scan-vsix <path-to-extension.vsix> [--json]
 bun run scguard config
 bun run scguard config --show
@@ -49,6 +50,12 @@ eval "$(bun run scguard shell-hook)"
 After that, habitual commands such as `bun add`, `npm install`, `pnpm update`, `yarn add`, and `code --install-extension ./extension.vsix` go through the guard first. The wrapper emits a weak warning for every package install/update operation because package managers and editor extensions can run untrusted code.
 
 For now, `code --install-extension publisher.name` is blocked because the VS Code CLI would download the extension before this tool can inspect it. Download the `.vsix`, scan it, then install the reviewed artifact.
+
+## npm Staged Publishing
+
+npm staged publishing lets maintainers review a package before it goes live. `scguard scan-stage <stage-id>` runs `npm stage download <stage-id>`, analyzes the downloaded tarball, and applies the same agent-review policy.
+
+With the shell hook active, `npm stage approve <stage-id>` is guarded: the staged package is downloaded, scanned, optionally reviewed by Codex/PI, and only then approved.
 
 ## Active Supply Chain Incident Mode
 
