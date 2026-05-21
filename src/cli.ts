@@ -559,9 +559,7 @@ function readActiveAdvisory(): ActiveAdvisory {
 
 function shellHook() {
   const entry = resolve(ROOT, "src", "cli.ts");
-  return `# Supply Chain Guard shell hook
-# Add this to your shell profile after reviewing it:
-[ -f "${CONFIG_ENV_PATH}" ] && source "${CONFIG_ENV_PATH}"
+  return `[ -f "${CONFIG_ENV_PATH}" ] && source "${CONFIG_ENV_PATH}"
 scguard() { command bun run ${entry} "$@"; }
 bun() { command bun run ${entry} guard bun "$@"; }
 npm() { command bun run ${entry} guard npm "$@"; }

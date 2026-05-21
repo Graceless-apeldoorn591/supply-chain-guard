@@ -69,7 +69,7 @@ echo
 echo "Installed: $BIN_PATH"
 echo
 echo "Add this to your shell profile to guard bun/npm/pnpm/yarn/code commands:"
-echo "  eval \"\\\$(scguard shell-hook)\""
+echo '  eval "$(scguard shell-hook)"'
 echo
 echo "Or activate it for this terminal now:"
-echo "  eval \"\\\$(scguard shell-hook)\""
+echo '  eval "$(scguard shell-hook)"'
