@@ -327,9 +327,16 @@ function satisfiesRange(v: SemVer, range: SemverRange): boolean {
     //   ^1.2.3 -> >=1.2.3 <2.0.0
     //   ^0.2.3 -> >=0.2.3 <0.3.0
     //   ^0.0.3 -> >=0.0.3 <0.0.4
+    // Partial specs leave the unspecified components at 0 and broaden the upper bound:
+    //   ^0     -> >=0.0.0 <1.0.0  (any 0.x.x)
+    //   ^0.0   -> >=0.0.0 <0.1.0  (any 0.0.x)
     if (cmp < 0) return false;
     if (range.base.major > 0) return v.major === range.base.major;
+    // major === 0
+    if (range.matchMajorOnly) return v.major === 0;
     if (range.base.minor > 0) return v.major === 0 && v.minor === range.base.minor;
+    // base is 0.0.x
+    if (range.matchMinorOnly) return v.major === 0 && v.minor === 0;
     return v.major === 0 && v.minor === 0 && v.patch === range.base.patch;
   }
   if (range.op === "~") {
