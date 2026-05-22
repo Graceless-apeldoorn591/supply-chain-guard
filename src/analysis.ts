@@ -7,12 +7,23 @@ import {
   commandExists,
   debug,
   objectValue,
+  readConfig,
   readActiveAdvisory,
   readJson,
   run,
   walk,
 } from "./core";
-import type { Finding, Report, Risk } from "./core";
+import type {
+  Finding,
+  PolicyPreset,
+  Report,
+  ReportPolicy,
+  PackageAgeResult,
+  Risk,
+  SafeResolverMode,
+  SafeResolverSuggestion,
+  ScanReason,
+} from "./core";
 import {
   checkOsv,
   checkPackageAge,
@@ -29,6 +40,10 @@ const PATTERNS_ALL: Array<[RegExp, string, Risk, string]> = [
   [/wget\s+[^|]+\|\s*(sh|bash)/i, "pipe-to-shell", "high", "Downloads and executes remote shell code."],
   [/(npmrc|\.ssh\/|id_rsa|AWS_SECRET|GITHUB_TOKEN|NPM_TOKEN)/i, "credential-access", "high", "References credentials or sensitive key paths."],
   [/(base64\s+-d|Buffer\.from\([^)]*base64)/i, "encoded-payload", "medium", "Decodes base64 payloads."],
+  [/\bdns\.(?:resolve|resolve4|resolve6|lookup|setServers)\s*\(/i, "dns-exfiltration", "high", "Uses DNS resolution APIs that are commonly abused for data exfiltration."],
+  [/fs\.(?:readFile|readFileSync)\s*\([\s\S]{0,240}?(fetch|axios|https?\.(?:request|get)|XMLHttpRequest)/i, "read-then-send", "high", "Reads local files then sends data over the network."],
+  [/(os\.homedir\(\)|~\/\.npmrc|\.npmrc|\.ssh\/id_rsa)/i, "sensitive-path-access", "high", "References sensitive local credential paths."],
+  [/process\.env\s*(?:\[[^\]]+\]|\.[A-Z0-9_]+)/i, "env-secret-access", "medium", "Accesses environment variables that may contain credentials."],
 ];
 
 // Patterns only checked when the scope is a lifecycle script (not generic source files).
@@ -38,21 +53,27 @@ const PATTERNS_SCRIPTS_ONLY: Array<[RegExp, string, Risk, string]> = [
   [/process\.env/i, "env-access", "medium", "Reads process environment variables in a lifecycle script."],
 ];
 
-export async function scanNpm(spec: string, options: { offline?: boolean } = {}): Promise<Report> {
+export async function scanNpm(spec: string, options: { offline?: boolean; packageAge?: PackageAgeResult } = {}): Promise<Report> {
+  const parsedSpec = parsePackageSpec(spec);
+  const requestedName = parsedSpec.name;
+  const requestedVersion = parsedSpec.version;
   debug(`resolving ${spec}`);
   const meta = await resolveNpm(spec);
   const tarball = String(meta.dist.tarball);
-  const name = String(meta.name);
+  const resolvedName = String(meta.name);
   const version = String(meta.version);
-  const safeName = name.replaceAll("/", "_").replaceAll("@", "");
+  const safeName = resolvedName.replaceAll("/", "_").replaceAll("@", "");
   const artifactPath = join(CACHE_DIR, `${safeName}-${version}.tgz`);
   const offlineOpt = { offline: options.offline };
   // Fan out intelligence lookups in parallel with the (cached or fresh) tarball download.
+  const packageAgePromise = options.packageAge
+    ? Promise.resolve(options.packageAge)
+    : checkPackageAge(resolvedName, version, offlineOpt);
   const intelPromise = Promise.all([
-    checkSocket(name, version, offlineOpt),
-    checkOsv(name, version, offlineOpt),
-    checkPackageAge(name, version, offlineOpt),
-    verifyNpmSignatures(name, version, meta.dist ?? {}, offlineOpt),
+    checkSocket(resolvedName, version, offlineOpt),
+    checkOsv(resolvedName, version, offlineOpt),
+    packageAgePromise,
+    verifyNpmSignatures(resolvedName, version, meta.dist ?? {}, offlineOpt),
   ]);
   if (await Bun.file(artifactPath).exists()) {
     debug(`cache hit ${artifactPath}`);
@@ -65,14 +86,26 @@ export async function scanNpm(spec: string, options: { offline?: boolean } = {})
   const packageDir = await findPackageRoot(extracted);
   debug(`analyzing ${packageDir}`);
   const [socket, osv, packageAge, npmSignature] = await intelPromise;
-  const typosquat = checkTyposquat(name);
-  const report = await analyzeDirectory(`${name}@${version}`, "npm", packageDir, tarball, artifactPath, {
+  const config = await readConfig();
+  const reportPolicy = await buildReportPolicy({
+    preset: config.preset,
+    safeResolver: config.safeResolver,
+    scanReason: "direct-review",
+  }, {
+    requestedVersion,
+    resolvedVersion: version,
+    packageAge,
+    name: requestedName,
+    offline: options.offline,
+  });
+  const typosquat = checkTyposquat(resolvedName);
+  const report = await analyzeDirectory(`${resolvedName}@${version}`, "npm", packageDir, tarball, artifactPath, {
     socket,
     osv,
     packageAge,
     npmSignature,
     typosquat,
-  });
+  }, reportPolicy);
   const expectedIntegrity = meta.dist?.integrity ? String(meta.dist.integrity) : undefined;
   if (expectedIntegrity) {
     const ok = await verifyIntegrity(artifactPath, expectedIntegrity);
@@ -96,7 +129,12 @@ export async function scanVsix(file: string): Promise<Report> {
   const extracted = await mkdtemp(join(WORK_DIR, "vsix-"));
   await run("unzip", ["-q", file, "-d", extracted]);
   const extensionDir = join(extracted, "extension");
-  return analyzeDirectory(basename(file), "vsix", extensionDir, file, file);
+  const config = await readConfig();
+  return analyzeDirectory(basename(file), "vsix", extensionDir, file, file, {}, {
+    preset: config.preset,
+    safeResolver: config.safeResolver,
+    scanReason: "policy",
+  });
 }
 
 export async function scanNpmStage(stageId: string, options: { offline?: boolean } = {}): Promise<Report> {
@@ -116,11 +154,16 @@ export async function scanNpmStage(stageId: string, options: { offline?: boolean
       ])
     : [undefined, undefined, undefined];
   const typosquat = known ? checkTyposquat(name) : undefined;
+  const config = await readConfig();
   return analyzeDirectory(`npm-stage:${stageId}:${name}@${version}`, "npm-stage", packageDir, `npm stage download ${stageId}`, artifactPath, {
     socket,
     osv,
     packageAge,
     typosquat,
+  }, {
+    preset: config.preset,
+    safeResolver: config.safeResolver,
+    scanReason: "policy",
   });
 }
 
@@ -131,6 +174,7 @@ export async function analyzeDirectory(
   source: string,
   artifactPath?: string,
   intelligence: Partial<Report["intelligence"]> = {},
+  policyOverride?: Partial<ReportPolicy>,
 ): Promise<Report> {
   const pkgPath = join(dir, "package.json");
   const pkg = await readJson<Record<string, unknown>>(pkgPath);
@@ -140,6 +184,19 @@ export async function analyzeDirectory(
   await inspectFiles(dir, findings);
   const artifact = artifactPath ? await artifactInfo(artifactPath, source) : { source, sha256: "not-applicable", bytes: 0 };
   const risk = summarizeRisk(findings);
+  const config = await readConfig();
+  const policy: ReportPolicy = policyOverride
+    ? {
+        preset: policyOverride.preset ?? config.preset,
+        safeResolver: policyOverride.safeResolver ?? config.safeResolver,
+        scanReason: policyOverride.scanReason ?? "direct-review",
+        ...(policyOverride.safeResolverSuggestion ? { safeResolverSuggestion: policyOverride.safeResolverSuggestion } : {}),
+      }
+    : {
+        preset: config.preset,
+        safeResolver: config.safeResolver,
+        scanReason: "direct-review",
+      };
   return {
     schemaVersion: 1,
     target,
@@ -157,6 +214,7 @@ export async function analyzeDirectory(
       installAllowed: risk !== "high",
     },
     findings,
+    policy,
   };
 }
 
@@ -346,17 +404,17 @@ async function inspectFiles(dir: string, findings: Finding[]) {
     if (!/\.(js|cjs|mjs|ts|sh|ps1|cmd|node)$/i.test(file) || s.size > 300_000) continue;
     const text = await Bun.file(file).text().catch(() => "");
     const stripped = stripComments(text).slice(0, 300_000);
-    if (isMinified(stripped)) {
+    const minified = isMinified(stripped);
+    if (minified) {
       findings.push({
         id: `file.${rel}.minified`,
         title: "Minified or bundled file",
-        severity: "low",
-        evidence: `${rel} appears minified (average line length > 250 chars); pattern scanning skipped`,
-        recommendation: "Review the unminified source if available before installing.",
+        severity: "medium",
+        evidence: `${rel} appears minified (average line length > 250 chars); pattern scanning may have reduced precision`,
+        recommendation: "Review the unminified source if available before installing and treat matched patterns as higher risk.",
       });
-      continue;
     }
-    inspectText(`file.${rel}`, stripped, findings, false);
+    inspectText(`file.${rel}`, stripped, findings, false, minified);
   }
 }
 
@@ -367,17 +425,19 @@ function isMinified(text: string): boolean {
   return avg > 250;
 }
 
-function inspectText(scope: string, text: string, findings: Finding[], isScript: boolean) {
+function inspectText(scope: string, text: string, findings: Finding[], isScript: boolean, inMinifiedFile = false) {
   const patterns = isScript ? [...PATTERNS_ALL, ...PATTERNS_SCRIPTS_ONLY] : PATTERNS_ALL;
   for (const [pattern, id, severity, title] of patterns) {
     const match = text.match(pattern);
     if (!match) continue;
     findings.push({
       id: `${scope}.${id}`,
-      title,
+      title: inMinifiedFile ? `${title} (detected in minified file)` : title,
       severity,
       evidence: snippet(text, match.index ?? 0),
-      recommendation: "Review the exact code path and require a trusted explanation before installing.",
+      recommendation: inMinifiedFile
+        ? "Pattern was found in minified code. Review the original source or deobfuscate before installing."
+        : "Review the exact code path and require a trusted explanation before installing.",
     });
   }
 }
@@ -448,15 +508,17 @@ export function resolveNpmVersion(versions: string[], distTags: Record<string, s
   if (!requested) return distTags.latest;
   if (versions.includes(requested)) return requested;
   if (distTags[requested]) return distTags[requested];
-  const range = parseSemverRange(requested);
-  if (range) {
-    const matches = versions
-      .map(parseSemver)
-      .filter((v): v is SemVer => v !== null && satisfiesRange(v, range) && !v.prerelease)
-      .sort(compareSemver);
-    if (matches.length > 0) return formatSemver(matches[matches.length - 1]);
-  }
+  const matches = versions
+    .filter((v) => Bun.semver.satisfies(v, requested))
+    .sort((a, b) => Bun.semver.order(a, b));
+  if (matches.length > 0) return matches[matches.length - 1];
   return undefined;
+}
+
+function versionMatchesRequested(version: string, requested: string, versions: string[], distTags: Record<string, string>): boolean {
+  if (versions.includes(requested)) return version === requested;
+  if (distTags[requested]) return version === distTags[requested];
+  return Bun.semver.satisfies(version, requested);
 }
 
 type SemVer = { major: number; minor: number; patch: number; prerelease?: string };
@@ -467,71 +529,10 @@ function parseSemver(version: string): SemVer | null {
   return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]), prerelease: match[4] };
 }
 
-function formatSemver(v: SemVer): string {
-  const base = `${v.major}.${v.minor}.${v.patch}`;
-  return v.prerelease ? `${base}-${v.prerelease}` : base;
-}
-
 function compareSemver(a: SemVer, b: SemVer): number {
   if (a.major !== b.major) return a.major - b.major;
   if (a.minor !== b.minor) return a.minor - b.minor;
   return a.patch - b.patch;
-}
-
-type SemverRange = { op: "^" | "~" | "=" | ">=" | ">"; base: SemVer; matchMajorOnly?: boolean; matchMinorOnly?: boolean };
-
-function parseSemverRange(spec: string): SemverRange | null {
-  const trimmed = spec.trim().replace(/^v/i, "");
-  const opMatch = trimmed.match(/^(\^|~|>=|>|=)?\s*(.+)$/);
-  if (!opMatch) return null;
-  const op = (opMatch[1] || "=") as SemverRange["op"];
-  const rest = opMatch[2];
-  const parts = rest.split(".");
-  if (parts.length === 0 || !parts[0] || !/^\d+$/.test(parts[0])) return null;
-  const major = Number(parts[0]);
-  const minor = parts[1] && /^\d+$/.test(parts[1]) ? Number(parts[1]) : 0;
-  const patch = parts[2] && /^\d+$/.test(parts[2].split("-")[0]) ? Number(parts[2].split("-")[0]) : 0;
-  return {
-    op,
-    base: { major, minor, patch },
-    matchMajorOnly: parts.length === 1,
-    matchMinorOnly: parts.length === 2,
-  };
-}
-
-function satisfiesRange(v: SemVer, range: SemverRange): boolean {
-  const cmp = compareSemver(v, range.base);
-  if (range.op === "=") {
-    // Partial specs behave like X-ranges: `18` matches any 18.x.x,
-    // `1.2` matches any 1.2.x. Only fully-qualified specs require an exact match.
-    if (range.matchMajorOnly) return v.major === range.base.major;
-    if (range.matchMinorOnly) return v.major === range.base.major && v.minor === range.base.minor;
-    return cmp === 0;
-  }
-  if (range.op === ">") return cmp > 0;
-  if (range.op === ">=") return cmp >= 0;
-  if (range.op === "^") {
-    // npm caret semantics:
-    //   ^1.2.3 -> >=1.2.3 <2.0.0
-    //   ^0.2.3 -> >=0.2.3 <0.3.0
-    //   ^0.0.3 -> >=0.0.3 <0.0.4
-    // Partial specs leave the unspecified components at 0 and broaden the upper bound:
-    //   ^0     -> >=0.0.0 <1.0.0  (any 0.x.x)
-    //   ^0.0   -> >=0.0.0 <0.1.0  (any 0.0.x)
-    if (cmp < 0) return false;
-    if (range.base.major > 0) return v.major === range.base.major;
-    // major === 0
-    if (range.matchMajorOnly) return v.major === 0;
-    if (range.base.minor > 0) return v.major === 0 && v.minor === range.base.minor;
-    // base is 0.0.x
-    if (range.matchMinorOnly) return v.major === 0 && v.minor === 0;
-    return v.major === 0 && v.minor === 0 && v.patch === range.base.patch;
-  }
-  if (range.op === "~") {
-    if (range.matchMajorOnly) return v.major === range.base.major && cmp >= 0;
-    return v.major === range.base.major && v.minor === range.base.minor && cmp >= 0;
-  }
-  return false;
 }
 
 export function parsePackageSpec(spec: string): { name: string; version?: string } {
@@ -543,6 +544,163 @@ export function parsePackageSpec(spec: string): { name: string; version?: string
   const at = spec.lastIndexOf("@");
   if (at <= 0) return { name: spec };
   return { name: spec.slice(0, at), version: spec.slice(at + 1) };
+}
+
+function buildReportPolicy(
+  base: Partial<ReportPolicy>,
+  context: {
+    name?: string;
+    requestedVersion?: string;
+    resolvedVersion?: string;
+    packageAge?: Report["intelligence"]["packageAge"];
+    offline?: boolean;
+  },
+): Promise<ReportPolicy> {
+  const preset = base.preset ?? "default";
+  const safeResolver = base.safeResolver ?? "suggest";
+  const scanReason = base.scanReason ?? "direct-review";
+  const freshnessWindowHours = freshnessWindowHoursForPreset(preset);
+  const versionAgeHours = context.packageAge?.status === "checked" ? context.packageAge.versionAgeHours : undefined;
+  const suggestionPromise = safeResolver === "suggest" && context.name && context.resolvedVersion && typeof versionAgeHours === "number" && versionAgeHours >= 0 && versionAgeHours < freshnessWindowHours
+    ? buildSafeResolverSuggestion({
+        name: context.name,
+        requestedVersion: context.requestedVersion,
+        resolvedVersion: context.resolvedVersion,
+        freshnessWindowHours,
+        offline: context.offline,
+      })
+    : Promise.resolve(undefined);
+  return suggestionPromise.then((safeResolverSuggestion) => ({
+    preset,
+    safeResolver,
+    scanReason,
+    ...(safeResolverSuggestion ? { safeResolverSuggestion } : {}),
+  }));
+}
+
+export function freshnessWindowHoursForPreset(preset: PolicyPreset): number {
+  if (preset === "quiet") return 24;
+  if (preset === "strict-ci") return 30 * 24;
+  if (preset === "enterprise") return 30 * 24;
+  return 7 * 24;
+}
+
+export async function buildSafeResolverSuggestion(options: {
+  name: string;
+  requestedVersion?: string;
+  resolvedVersion: string;
+  freshnessWindowHours: number;
+  offline?: boolean;
+}): Promise<SafeResolverSuggestion> {
+  if (options.offline) {
+    return {
+      status: "unavailable",
+      message: "Offline mode: safe resolver suggestion skipped.",
+      resolved: options.resolvedVersion,
+      requested: options.requestedVersion,
+      freshnessWindowHours: options.freshnessWindowHours,
+    };
+  }
+  const requested = options.requestedVersion;
+  if (!requested) {
+    return {
+      status: "none",
+      message: `No older version satisfies the implicit latest-tag request for ${options.name}.`,
+      resolved: options.resolvedVersion,
+      freshnessWindowHours: options.freshnessWindowHours,
+    };
+  }
+  try {
+    const res = await fetch(`https://registry.npmjs.org/${encodeURIComponent(options.name).replace("%40", "@")}`, {
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) {
+      return {
+        status: "unavailable",
+        message: `Registry returned HTTP ${res.status}; safe resolver suggestion unavailable.`,
+        requested,
+        resolved: options.resolvedVersion,
+        freshnessWindowHours: options.freshnessWindowHours,
+      };
+    }
+    const data = await res.json() as { versions?: Record<string, Record<string, unknown>>; time?: Record<string, string>; "dist-tags"?: Record<string, string> };
+    return pickSafeResolverSuggestion({
+      name: options.name,
+      requestedVersion: requested,
+      resolvedVersion: options.resolvedVersion,
+      freshnessWindowHours: options.freshnessWindowHours,
+      versions: Object.keys(data.versions ?? {}),
+      publishTimes: data.time ?? {},
+      distTags: data["dist-tags"] ?? {},
+    });
+  } catch (error) {
+    return {
+      status: "unavailable",
+      message: error instanceof Error ? error.message : String(error),
+      requested,
+      resolved: options.resolvedVersion,
+      freshnessWindowHours: options.freshnessWindowHours,
+    };
+  }
+}
+
+export function pickSafeResolverSuggestion(options: {
+  name: string;
+  requestedVersion?: string;
+  resolvedVersion: string;
+  freshnessWindowHours: number;
+  versions: string[];
+  publishTimes: Record<string, string>;
+  distTags?: Record<string, string>;
+}): SafeResolverSuggestion {
+  const requested = options.requestedVersion;
+  if (!requested) {
+    return {
+      status: "none",
+      message: `No older version satisfies the implicit latest-tag request for ${options.name}.`,
+      resolved: options.resolvedVersion,
+      freshnessWindowHours: options.freshnessWindowHours,
+    };
+  }
+  const versions = options.versions;
+  const distTags = options.distTags ?? {};
+  const allowPrerelease = requested.includes("-");
+  const candidates = versions
+    .filter((version) => version !== options.resolvedVersion)
+    .filter((version) => versionMatchesRequested(version, requested, versions, distTags))
+    .filter((version) => {
+      const parsed = parseSemver(version);
+      if (!parsed) return false;
+      if (parsed.prerelease && !allowPrerelease) return false;
+      const published = options.publishTimes[version];
+      if (!published) return false;
+      const ageHours = Math.floor((Date.now() - Date.parse(published)) / 3_600_000);
+      return Number.isFinite(ageHours) && ageHours >= options.freshnessWindowHours;
+    })
+    .map((version) => ({
+      version,
+      parsed: parseSemver(version),
+    }))
+    .filter((entry): entry is { version: string; parsed: SemVer } => !!entry.parsed)
+    .sort((a, b) => compareSemver(a.parsed, b.parsed));
+  const suggested = candidates[candidates.length - 1]?.version;
+  if (!suggested) {
+    return {
+      status: "none",
+      message: `No older non-prerelease version satisfies ${options.name}@${requested}.`,
+      requested,
+      resolved: options.resolvedVersion,
+      freshnessWindowHours: options.freshnessWindowHours,
+    };
+  }
+  return {
+    status: "suggested",
+    message: `Safe Resolver suggests ${options.name}@${suggested} instead of the freshly published ${options.resolvedVersion}.`,
+    requested,
+    resolved: options.resolvedVersion,
+    suggested,
+    freshnessWindowHours: options.freshnessWindowHours,
+  };
 }
 
 async function download(url: string, path: string) {
