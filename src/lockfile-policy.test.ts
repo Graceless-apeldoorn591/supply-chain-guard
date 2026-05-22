@@ -91,6 +91,12 @@ describe("lockfile policy selection", () => {
     expect(shouldBlockLockfileInstall("advisory", 1)).toBe(false);
     expect(shouldBlockLockfileInstall("default", 1)).toBe(true);
   });
+
+  test("scan failures block unless explicitly allowed", () => {
+    expect(shouldBlockLockfileInstall("default", 0, 1, false)).toBe(true);
+    expect(shouldBlockLockfileInstall("advisory", 0, 1, false)).toBe(true);
+    expect(shouldBlockLockfileInstall("default", 0, 1, true)).toBe(false);
+  });
 });
 
 describe("lockfile baseline persistence", () => {

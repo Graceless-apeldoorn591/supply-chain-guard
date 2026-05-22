@@ -425,7 +425,7 @@ export async function scanLockfile(cwd: string, args: string[] = []): Promise<Lo
   await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, plan.selected.length)) }, () => worker()));
   if (process.stderr.isTTY) process.stderr.write("\n");
 
-  summary.blockInstall = shouldBlockLockfileInstall(config.preset, summary.blocked.length);
+  summary.blockInstall = shouldBlockLockfileInstall(config.preset, summary.blocked.length, summary.failed.length);
   if (summary.failed.length === 0 && !summary.blockInstall) {
     await writeLockfileBaseline({
       schemaVersion: 1,
@@ -476,7 +476,8 @@ function lockfileBlockingError(summary: LockfileScanSummary): Error {
   return new Error(lines.join("\n"));
 }
 
-export function shouldBlockLockfileInstall(preset: PolicyPreset, blockedCount: number) {
+export function shouldBlockLockfileInstall(preset: PolicyPreset, blockedCount: number, failedCount = 0, allowScanFailures = Bun.env.SCGUARD_ALLOW_SCAN_FAILURES === "1") {
+  if (failedCount > 0 && !allowScanFailures) return true;
   return preset !== "advisory" && blockedCount > 0;
 }
 
