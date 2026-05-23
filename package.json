@@ -21,7 +21,7 @@
     "type": "git",
     "url": "https://github.com/pc-style/supply-chain-guard.git"
   },
-  "homepage": "https://supply-chain-guard-five.vercel.app",
+  "homepage": "https://scguard.pcstyle.dev/",
   "bugs": {
     "url": "https://github.com/pc-style/supply-chain-guard/issues"
   },
